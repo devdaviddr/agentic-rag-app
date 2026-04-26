@@ -11,6 +11,15 @@ import {
   UploadIcon,
 } from './icons';
 
+type IngestStatus =
+  | 'queued'
+  | 'rasterizing'
+  | 'ocr'
+  | 'embedding'
+  | 'ready'
+  | 'failed'
+  | string;
+
 interface DocumentRow {
   id: string;
   source: string;
@@ -21,6 +30,11 @@ interface DocumentRow {
   chunkCount: number;
   metadata: Record<string, unknown>;
   createdAt: string;
+  ingestStatus: IngestStatus;
+  ingestError: string | null;
+  pagesDone: number;
+  pagesTotal: number | null;
+  extractionMethod: string | null;
 }
 
 type Status =
@@ -28,6 +42,8 @@ type Status =
   | { kind: 'busy'; message: string }
   | { kind: 'ok'; message: string }
   | { kind: 'error'; message: string };
+
+const TERMINAL: ReadonlySet<string> = new Set(['ready', 'failed']);
 
 export function SourcesPanel({ onChange }: { onChange?: () => void }) {
   const [docs, setDocs] = useState<DocumentRow[]>([]);
@@ -37,6 +53,7 @@ export function SourcesPanel({ onChange }: { onChange?: () => void }) {
   const [pasteText, setPasteText] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     const r = await fetch('/api/sources', { cache: 'no-store' });
@@ -52,19 +69,84 @@ export function SourcesPanel({ onChange }: { onChange?: () => void }) {
     void refresh();
   }, [refresh]);
 
+  // Single shared poll loop. Walk all non-terminal docs every 2s; merge
+  // status into row state. Stops when nothing pending.
+  useEffect(() => {
+    const pending = docs.filter((d) => !TERMINAL.has(d.ingestStatus));
+    if (pending.length === 0) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      const updates = await Promise.all(
+        pending.map(async (d) => {
+          try {
+            const r = await fetch(`/api/documents/${d.id}/status`, { cache: 'no-store' });
+            if (!r.ok) return null;
+            const j = (await r.json()) as {
+              status: IngestStatus;
+              pagesDone: number;
+              pagesTotal: number | null;
+              error: string | null;
+              extractionMethod: string | null;
+            };
+            return { id: d.id, ...j };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      let anyTerminal = false;
+      setDocs((prev) =>
+        prev.map((row) => {
+          const u = updates.find((x) => x && x.id === row.id);
+          if (!u) return row;
+          if (TERMINAL.has(u.status)) anyTerminal = true;
+          return {
+            ...row,
+            ingestStatus: u.status,
+            ingestError: u.error,
+            pagesDone: u.pagesDone ?? row.pagesDone,
+            pagesTotal: u.pagesTotal ?? row.pagesTotal,
+            extractionMethod: u.extractionMethod ?? row.extractionMethod,
+          };
+        }),
+      );
+      if (anyTerminal) onChange?.();
+    }, 2000);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [docs, onChange]);
+
   const onUpload = useCallback(
     async (file: File) => {
       setStatus({ kind: 'busy', message: `Uploading ${file.name}…` });
       const fd = new FormData();
       fd.append('file', file);
       const r = await fetch('/api/ingest/upload', { method: 'POST', body: fd });
-      if (!r.ok) {
+      if (!r.ok && r.status !== 202) {
         const err = await r.json().catch(() => ({ error: r.statusText }));
         setStatus({ kind: 'error', message: err.error ?? `Upload failed: ${r.status}` });
         return;
       }
-      const json = (await r.json()) as { chunkCount: number };
-      setStatus({ kind: 'ok', message: `Ingested ${file.name} (${json.chunkCount} chunks)` });
+      const json = (await r.json()) as Partial<{
+        chunkCount: number;
+        documentId: string;
+        queued: boolean;
+      }>;
+      const msg =
+        json.queued
+          ? `Queued ${file.name} — vision OCR starting…`
+          : `Ingested ${file.name} (${json.chunkCount ?? 0} chunks)`;
+      setStatus({ kind: 'ok', message: msg });
       await refresh();
       onChange?.();
     },
@@ -237,10 +319,92 @@ function StatusInline({ status }: { status: Status }) {
   );
 }
 
+function StatusPill({ doc }: { doc: DocumentRow }) {
+  const s = doc.ingestStatus;
+  if (s === 'ready') {
+    return (
+      <span className="shrink-0 inline-flex items-center h-5 px-2 rounded-full text-[11px] font-medium bg-success-subtle text-success">
+        ready
+      </span>
+    );
+  }
+  if (s === 'failed') {
+    return (
+      <span
+        className="shrink-0 inline-flex items-center h-5 px-2 rounded-full text-[11px] font-medium bg-danger-subtle text-danger"
+        title={doc.ingestError ?? 'Ingest failed'}
+      >
+        failed
+      </span>
+    );
+  }
+  if (s === 'queued') {
+    return (
+      <span className="shrink-0 inline-flex items-center h-5 px-2 rounded-full text-[11px] font-medium bg-subtle text-secondary">
+        queued
+      </span>
+    );
+  }
+  // mid-pipeline
+  return (
+    <span className="shrink-0 inline-flex items-center gap-1.5 h-5 px-2 rounded-full text-[11px] font-medium bg-warning-subtle text-warning">
+      <Spinner />
+      {s}
+    </span>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      className="h-3 w-3 animate-spin"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function ProgressBar({ done, total }: { done: number; total: number }) {
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+  return (
+    <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-subtle">
+      <div
+        className="h-full bg-accent transition-[width] duration-500"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+function statusLabelFor(doc: DocumentRow): string | null {
+  const s = doc.ingestStatus;
+  if (s === 'ready' || s === 'failed' || s === 'queued') return null;
+  if (doc.pagesTotal != null && doc.pagesTotal > 0) {
+    const phase = s === 'ocr' ? 'OCR' : s === 'rasterizing' ? 'rasterize' : s === 'embedding' ? 'embed' : s;
+    return `${phase} · page ${doc.pagesDone}/${doc.pagesTotal}`;
+  }
+  return s;
+}
+
 function SourceRow({ doc, onDelete }: { doc: DocumentRow; onDelete: () => void }) {
   const isPdf = doc.mimeType === 'application/pdf' || doc.source.toLowerCase().endsWith('.pdf');
+  const midPipeline =
+    doc.ingestStatus !== 'ready' &&
+    doc.ingestStatus !== 'failed' &&
+    doc.ingestStatus !== 'queued' &&
+    (doc.pagesTotal ?? 0) > 0;
   return (
-    <li className="group flex items-center gap-3 px-4 py-3 hover:bg-subtle transition-colors">
+    <li className="group relative flex items-center gap-3 px-4 py-3 hover:bg-subtle transition-colors">
       <Link href={`/documents/${doc.id}`} className="flex flex-1 min-w-0 items-center gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-subtle text-muted group-hover:bg-surface group-hover:text-accent transition-colors">
           {isPdf ? <PdfIcon size={16} /> : <FileIcon size={16} />}
@@ -250,13 +414,19 @@ function SourceRow({ doc, onDelete }: { doc: DocumentRow; onDelete: () => void }
           <p className="truncate text-xs text-muted">
             {doc.chunkCount} chunk{doc.chunkCount === 1 ? '' : 's'}
             {doc.bytes !== null ? ` · ${formatBytes(doc.bytes)}` : ''}
+            {midPipeline && doc.pagesTotal != null
+              ? ` · ${doc.pagesDone}/${doc.pagesTotal} pages`
+              : ''}
             {' · '}
             {new Date(doc.createdAt).toLocaleDateString()}
           </p>
         </div>
-        <span className="shrink-0 inline-flex items-center h-5 px-2 rounded-full text-[11px] font-medium bg-success-subtle text-success">
-          indexed
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {statusLabelFor(doc) && (
+            <span className="text-[11px] text-muted">{statusLabelFor(doc)}</span>
+          )}
+          <StatusPill doc={doc} />
+        </div>
       </Link>
       <button
         onClick={onDelete}
@@ -265,6 +435,9 @@ function SourceRow({ doc, onDelete }: { doc: DocumentRow; onDelete: () => void }
       >
         <TrashIcon size={14} />
       </button>
+      {midPipeline && doc.pagesTotal != null && (
+        <ProgressBar done={doc.pagesDone} total={doc.pagesTotal} />
+      )}
     </li>
   );
 }

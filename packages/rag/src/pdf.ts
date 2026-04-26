@@ -1,8 +1,21 @@
-import { extractText, getDocumentProxy } from 'unpdf';
+import { configureUnPDF, extractText, getDocumentProxy } from 'unpdf';
 
 export interface PdfExtractionResult {
   text: string;
   pageCount: number;
+}
+
+let pdfjsConfigured = false;
+
+/**
+ * unpdf@^1 separates the serverless build from the full pdfjs build.
+ * `renderPageAsImage` (and other render-y bits) require the full build,
+ * which we lazy-load on first use. Configure once per process.
+ */
+export async function ensurePdfjs(): Promise<void> {
+  if (pdfjsConfigured) return;
+  await configureUnPDF({ pdfjs: () => import('unpdf/pdfjs') });
+  pdfjsConfigured = true;
 }
 
 /**
@@ -12,9 +25,10 @@ export interface PdfExtractionResult {
  * should map to a 4xx response.
  *
  * Note: image-only / scanned PDFs return empty or near-empty text; OCR is
- * out of scope for v1.
+ * out of scope for this fallback path — the vision pipeline owns that.
  */
 export async function extractPdfText(input: Uint8Array | ArrayBuffer): Promise<PdfExtractionResult> {
+  await ensurePdfjs();
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const pdf = await getDocumentProxy(bytes);
   const { text, totalPages } = await extractText(pdf, { mergePages: false });
