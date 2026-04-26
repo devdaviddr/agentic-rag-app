@@ -28,5 +28,11 @@ export async function POST(req: NextRequest) {
     toolDeps: { embedder, defaultTopK: env.RAG_TOP_K },
   });
 
-  return result.toDataStreamResponse();
+  return result.toDataStreamResponse({
+    getErrorMessage: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[/api/chat] error:', error);
+      return message;
+    },
+  });
 }
