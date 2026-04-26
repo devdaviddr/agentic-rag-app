@@ -8,6 +8,13 @@
       "when": 1777170510725,
       "tag": "0000_chilly_union_jack",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777172926322,
+      "tag": "0001_secret_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

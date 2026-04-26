@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { getDb } from './client.js';
 import { documents, chunks } from './schema.js';
 
@@ -16,6 +16,9 @@ export interface DocumentListItem {
   id: string;
   source: string;
   title: string | null;
+  mimeType: string | null;
+  bytes: number | null;
+  hasOriginal: boolean;
   chunkCount: number;
   metadata: Record<string, unknown>;
   createdAt: Date;
@@ -28,17 +31,23 @@ export async function listDocuments(limit = 200): Promise<DocumentListItem[]> {
     id: string;
     source: string;
     title: string | null;
+    mime_type: string | null;
+    bytes: number | null;
+    has_original: boolean;
     chunk_count: number;
     metadata: Record<string, unknown>;
     created_at: Date | string;
   }>(sql`
     SELECT
-      d.id              AS id,
-      d.source          AS source,
-      d.title           AS title,
-      COUNT(c.id)::int  AS chunk_count,
-      d.metadata        AS metadata,
-      d.created_at      AS created_at
+      d.id                                    AS id,
+      d.source                                AS source,
+      d.title                                 AS title,
+      d.mime_type                             AS mime_type,
+      d.bytes                                 AS bytes,
+      (d.original_content IS NOT NULL)        AS has_original,
+      COUNT(c.id)::int                        AS chunk_count,
+      d.metadata                              AS metadata,
+      d.created_at                            AS created_at
     FROM ${documents} d
     LEFT JOIN ${chunks} c ON c.document_id = d.id
     GROUP BY d.id
@@ -49,8 +58,152 @@ export async function listDocuments(limit = 200): Promise<DocumentListItem[]> {
     id: r.id,
     source: r.source,
     title: r.title,
+    mimeType: r.mime_type,
+    bytes: r.bytes,
+    hasOriginal: r.has_original,
     chunkCount: r.chunk_count,
     metadata: r.metadata,
     createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
   }));
+}
+
+export interface DocumentDetail {
+  id: string;
+  source: string;
+  title: string | null;
+  mimeType: string | null;
+  bytes: number | null;
+  hasOriginal: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+  chunkCount: number;
+}
+
+export async function getDocument(id: string): Promise<DocumentDetail | null> {
+  const db = getDb();
+  const rows = await db.execute<{
+    id: string;
+    source: string;
+    title: string | null;
+    mime_type: string | null;
+    bytes: number | null;
+    has_original: boolean;
+    metadata: Record<string, unknown>;
+    created_at: Date | string;
+    chunk_count: number;
+  }>(sql`
+    SELECT
+      d.id                                AS id,
+      d.source                            AS source,
+      d.title                             AS title,
+      d.mime_type                         AS mime_type,
+      d.bytes                             AS bytes,
+      (d.original_content IS NOT NULL)    AS has_original,
+      d.metadata                          AS metadata,
+      d.created_at                        AS created_at,
+      (SELECT COUNT(*)::int FROM ${chunks} c WHERE c.document_id = d.id) AS chunk_count
+    FROM ${documents} d
+    WHERE d.id = ${id}
+    LIMIT 1
+  `);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    source: r.source,
+    title: r.title,
+    mimeType: r.mime_type,
+    bytes: r.bytes,
+    hasOriginal: r.has_original,
+    metadata: r.metadata,
+    createdAt: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+    chunkCount: r.chunk_count,
+  };
+}
+
+export interface OriginalContent {
+  bytes: Buffer;
+  mimeType: string;
+  filename: string;
+}
+
+export async function getDocumentOriginal(id: string): Promise<OriginalContent | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      source: documents.source,
+      mimeType: documents.mimeType,
+      originalContent: documents.originalContent,
+    })
+    .from(documents)
+    .where(eq(documents.id, id))
+    .limit(1);
+  if (!row || !row.originalContent) return null;
+  return {
+    bytes: Buffer.isBuffer(row.originalContent)
+      ? row.originalContent
+      : Buffer.from(row.originalContent as Uint8Array),
+    mimeType: row.mimeType ?? 'application/octet-stream',
+    filename: row.source,
+  };
+}
+
+export interface ChunkListItem {
+  id: string;
+  ordinal: number;
+  content: string;
+  tokens: number | null;
+  embedding?: number[] | null;
+}
+
+export async function listChunksForDocument(
+  documentId: string,
+  opts: { includeEmbedding?: boolean } = {},
+): Promise<ChunkListItem[]> {
+  const db = getDb();
+  const rows = opts.includeEmbedding
+    ? await db
+        .select({
+          id: chunks.id,
+          ordinal: chunks.ordinal,
+          content: chunks.content,
+          tokens: chunks.tokens,
+          embedding: chunks.embedding,
+        })
+        .from(chunks)
+        .where(eq(chunks.documentId, documentId))
+        .orderBy(asc(chunks.ordinal))
+    : await db
+        .select({
+          id: chunks.id,
+          ordinal: chunks.ordinal,
+          content: chunks.content,
+          tokens: chunks.tokens,
+        })
+        .from(chunks)
+        .where(eq(chunks.documentId, documentId))
+        .orderBy(asc(chunks.ordinal));
+  return rows.map((r) => ({
+    id: r.id,
+    ordinal: r.ordinal,
+    content: r.content,
+    tokens: r.tokens ?? null,
+    embedding: 'embedding' in r ? coerceVector(r.embedding) : undefined,
+  }));
+}
+
+/**
+ * Drizzle-orm types `vector` columns as `unknown` in select results because
+ * pgvector can come back as either `number[]` (from postgres-js with array
+ * parsing) or a stringified `[v1,v2,...]`. Normalize to `number[] | null`.
+ */
+function coerceVector(value: unknown): number[] | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map(Number);
+  if (typeof value === 'string') {
+    const trimmed = value.replace(/^\[|\]$/g, '');
+    if (trimmed.length === 0) return [];
+    return trimmed.split(',').map((s) => Number(s.trim()));
+  }
+  return null;
 }

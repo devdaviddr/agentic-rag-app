@@ -15,11 +15,14 @@
     "@app/db": "workspace:*",
     "@app/rag": "workspace:*",
     "@app/shared": "workspace:*",
+    "@tailwindcss/postcss": "^4.2.4",
     "ai": "catalog:",
-    "ollama-ai-provider": "catalog:",
     "next": "^15.1.4",
+    "ollama-ai-provider": "catalog:",
+    "postcss": "^8.5.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwindcss": "^4.2.4",
     "zod": "catalog:"
   },
   "devDependencies": {

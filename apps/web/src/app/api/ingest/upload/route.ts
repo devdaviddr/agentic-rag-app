@@ -5,7 +5,6 @@ import { getEmbedder } from '@/lib/embedder';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Allow large PDFs.
 export const maxDuration = 60;
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -24,6 +23,15 @@ function detectKind(filename: string, mime: string): Kind | null {
     return 'text';
   }
   return null;
+}
+
+function resolveMime(kind: Kind, providedMime: string, filename: string): string {
+  if (providedMime && providedMime !== 'application/octet-stream') return providedMime;
+  if (kind === 'pdf') return 'application/pdf';
+  if (filename.toLowerCase().endsWith('.md') || filename.toLowerCase().endsWith('.markdown')) {
+    return 'text/markdown';
+  }
+  return 'text/plain';
 }
 
 export async function POST(req: NextRequest) {
@@ -56,21 +64,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Read once: bytes get persisted as the original; text-extraction path
+  // either decodes them (text) or hands them to unpdf (pdf).
+  const rawBytes = new Uint8Array(await file.arrayBuffer());
+  const mimeType = resolveMime(kind, file.type, file.name);
+
   let content: string;
   const metadata: Record<string, unknown> = {
     filename: file.name,
-    mimeType: file.type || (kind === 'pdf' ? 'application/pdf' : 'text/plain'),
+    mimeType,
     bytes: file.size,
   };
 
   try {
     if (kind === 'pdf') {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      const { text, pageCount } = await extractPdfText(buf);
+      const { text, pageCount } = await extractPdfText(rawBytes);
       content = text;
       metadata.pageCount = pageCount;
     } else {
-      content = (await file.text()).trim();
+      content = new TextDecoder('utf-8', { fatal: false }).decode(rawBytes).trim();
       if (content.length === 0) {
         return NextResponse.json({ error: 'File contains no text' }, { status: 400 });
       }
@@ -81,7 +93,8 @@ export async function POST(req: NextRequest) {
   }
 
   const titleField = form.get('title');
-  const title = typeof titleField === 'string' && titleField.trim().length > 0 ? titleField.trim() : file.name;
+  const title =
+    typeof titleField === 'string' && titleField.trim().length > 0 ? titleField.trim() : file.name;
 
   const env = getEnv();
   const embedder = getEmbedder();
@@ -96,6 +109,11 @@ export async function POST(req: NextRequest) {
       chunkSize: env.RAG_CHUNK_SIZE,
       chunkOverlap: env.RAG_CHUNK_OVERLAP,
       embedder,
+    },
+    {
+      originalBytes: rawBytes,
+      mimeType,
+      bytes: file.size,
     },
   );
 
