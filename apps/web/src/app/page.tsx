@@ -1,12 +1,15 @@
+'use client';
+
 import { Chat } from '@/components/chat';
+import { SourcesPanel } from '@/components/sources-panel';
 
 export default function HomePage() {
   return (
     <main
       style={{
-        maxWidth: 880,
+        maxWidth: 1280,
         margin: '0 auto',
-        padding: '32px 16px',
+        padding: '24px 16px',
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
@@ -19,7 +22,18 @@ export default function HomePage() {
           Local-first knowledge base · Ollama + pgvector + Vercel AI SDK
         </p>
       </header>
-      <Chat />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '320px 1fr',
+          gap: 16,
+          alignItems: 'start',
+          flex: 1,
+        }}
+      >
+        <SourcesPanel />
+        <Chat />
+      </div>
     </main>
   );
 }

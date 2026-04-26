@@ -19,6 +19,7 @@
     "drizzle-orm": "catalog:",
     "ollama-ai-provider": "catalog:",
     "ai": "catalog:",
+    "unpdf": "^0.12.1",
     "zod": "catalog:"
   },
   "devDependencies": {
