@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ResolvedSettings } from '@app/shared';
 import { AlertIcon, CheckIcon } from './icons';
 
@@ -32,11 +32,24 @@ interface OllamaModel {
   modified_at?: string;
 }
 
-type TestState =
+type TagState =
   | { kind: 'idle' }
   | { kind: 'busy' }
   | { kind: 'ok'; models: OllamaModel[] }
   | { kind: 'error'; message: string };
+
+// Ollama returns "nomic-embed-text:latest"; users often store
+// "nomic-embed-text" (no tag). Normalize so a tagless name matches
+// the same name with `:latest` appended.
+function normalizeTag(name: string): string {
+  return name.includes(':') ? name : `${name}:latest`;
+}
+
+function modelMatches(stored: string, available: ReadonlySet<string>): boolean {
+  if (!stored) return false;
+  if (available.has(stored)) return true;
+  return available.has(normalizeTag(stored));
+}
 
 export function SettingsForm() {
   const [data, setData] = useState<SettingsPayload | null>(null);
@@ -45,7 +58,8 @@ export function SettingsForm() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [test, setTest] = useState<TestState>({ kind: 'idle' });
+  const [tags, setTags] = useState<TagState>({ kind: 'idle' });
+  const fetchSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     const r = await fetch('/api/settings', { cache: 'no-store' });
@@ -61,6 +75,32 @@ export function SettingsForm() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Auto-fetch tags whenever the effective Base URL changes (initial load
+  // and live edits), debounced so we don't hammer the server.
+  const baseUrlForFetch = useMemo(() => {
+    if (!data) return null;
+    if ('ollamaBaseUrl' in draft) {
+      const v = draft.ollamaBaseUrl;
+      if (v === null) return data.envDefaults.ollamaBaseUrl;
+      if (typeof v === 'string') return v;
+    }
+    return data.resolved.ollamaBaseUrl;
+  }, [data, draft]);
+
+  useEffect(() => {
+    if (!baseUrlForFetch) return;
+    try {
+      new URL(baseUrlForFetch);
+    } catch {
+      return;
+    }
+    const t = setTimeout(() => {
+      void fetchTags(baseUrlForFetch);
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrlForFetch]);
 
   const setField = useCallback((f: Field, v: string | number | null) => {
     setSaveOk(false);
@@ -94,16 +134,25 @@ export function SettingsForm() {
     }
   }, [dirty, draft]);
 
-  const onTest = useCallback(async () => {
-    setTest({ kind: 'busy' });
-    const r = await fetch('/api/ollama/tags', { cache: 'no-store' });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({ error: r.statusText }));
-      setTest({ kind: 'error', message: err.error ?? `HTTP ${r.status}` });
-      return;
+  const fetchTags = useCallback(async (baseUrl: string) => {
+    const seq = ++fetchSeq.current;
+    setTags({ kind: 'busy' });
+    try {
+      const url = `/api/ollama/tags?baseUrl=${encodeURIComponent(baseUrl)}`;
+      const r = await fetch(url, { cache: 'no-store' });
+      if (seq !== fetchSeq.current) return;
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: r.statusText }));
+        setTags({ kind: 'error', message: err.error ?? `HTTP ${r.status}` });
+        return;
+      }
+      const json = (await r.json()) as { models: OllamaModel[] };
+      setTags({ kind: 'ok', models: json.models ?? [] });
+    } catch (err) {
+      if (seq !== fetchSeq.current) return;
+      const message = err instanceof Error ? err.message : 'unknown error';
+      setTags({ kind: 'error', message });
     }
-    const json = (await r.json()) as { models: OllamaModel[] };
-    setTest({ kind: 'ok', models: json.models ?? [] });
   }, []);
 
   if (!data) {
@@ -126,6 +175,8 @@ export function SettingsForm() {
     return o !== undefined && o !== null;
   };
 
+  const currentBaseUrl = String(effective('ollamaBaseUrl'));
+
   return (
     <div className="flex flex-col gap-6">
       <Card title="Ollama" subtitle="Local model server endpoint.">
@@ -137,7 +188,7 @@ export function SettingsForm() {
           onReset={() => setField('ollamaBaseUrl', null)}
         >
           <input
-            value={String(effective('ollamaBaseUrl'))}
+            value={currentBaseUrl}
             onChange={(e) => setField('ollamaBaseUrl', e.target.value)}
             placeholder={data.envDefaults.ollamaBaseUrl}
             className={inputCls}
@@ -147,27 +198,27 @@ export function SettingsForm() {
         <div className="flex items-center gap-3 pt-2">
           <button
             type="button"
-            onClick={() => void onTest()}
-            disabled={test.kind === 'busy'}
+            onClick={() => void fetchTags(currentBaseUrl)}
+            disabled={tags.kind === 'busy'}
             className="h-9 px-3.5 rounded-lg bg-surface text-primary border border-border-default text-sm font-semibold shadow-xs hover:bg-subtle transition-colors disabled:opacity-50"
           >
-            {test.kind === 'busy' ? 'Testing…' : 'Test connection'}
+            {tags.kind === 'busy' ? 'Testing…' : 'Test connection'}
           </button>
-          {test.kind === 'error' && (
+          {tags.kind === 'error' && (
             <span className="inline-flex items-center gap-1.5 text-xs text-danger">
-              <AlertIcon size={14} /> {test.message}
+              <AlertIcon size={14} /> {tags.message}
             </span>
           )}
-          {test.kind === 'ok' && (
+          {tags.kind === 'ok' && (
             <span className="inline-flex items-center gap-1.5 text-xs text-success">
-              <CheckIcon size={14} /> {test.models.length} model{test.models.length === 1 ? '' : 's'} found
+              <CheckIcon size={14} /> {tags.models.length} model{tags.models.length === 1 ? '' : 's'} found
             </span>
           )}
         </div>
 
-        {test.kind === 'ok' && (
+        {tags.kind === 'ok' && (
           <ModelAvailability
-            models={test.models}
+            models={tags.models}
             chatModel={String(effective('chatModel'))}
             embedModel={String(effective('embedModel'))}
             visionModel={String(effective('visionModel'))}
@@ -175,53 +226,52 @@ export function SettingsForm() {
         )}
       </Card>
 
-      <Card title="Models" subtitle="Identifiers as Ollama tags (e.g. llama3.1:8b).">
-        <FieldRow
+      <Card
+        title="Models"
+        subtitle="Pick from the models pulled on the Ollama host above."
+      >
+        <ModelField
           label="Chat model"
-          envHint={data.envDefaults.chatModel}
+          field="chatModel"
+          tags={tags}
+          envDefault={data.envDefaults.chatModel}
+          value={String(effective('chatModel'))}
           override={hasOverride('chatModel')}
+          onChange={(v) => setField('chatModel', v)}
           onReset={() => setField('chatModel', null)}
-        >
-          <input
-            value={String(effective('chatModel'))}
-            onChange={(e) => setField('chatModel', e.target.value)}
-            placeholder={data.envDefaults.chatModel}
-            className={inputCls}
-          />
-        </FieldRow>
+          onRefresh={() => void fetchTags(currentBaseUrl)}
+        />
 
-        <FieldRow
+        <ModelField
           label="Embedding model"
-          envHint={data.envDefaults.embedModel}
+          field="embedModel"
+          tags={tags}
+          envDefault={data.envDefaults.embedModel}
+          value={String(effective('embedModel'))}
           override={hasOverride('embedModel')}
+          onChange={(v) => setField('embedModel', v)}
           onReset={() => setField('embedModel', null)}
-        >
-          <input
-            value={String(effective('embedModel'))}
-            onChange={(e) => setField('embedModel', e.target.value)}
-            placeholder={data.envDefaults.embedModel}
-            className={inputCls}
-          />
-          <p className="mt-2 inline-flex items-start gap-1.5 rounded-md bg-warning-subtle px-2.5 py-1.5 text-xs text-warning">
-            <AlertIcon size={14} />
-            Changing the embed model requires re-uploading affected documents (vector dimensions may differ).
-          </p>
-        </FieldRow>
+          onRefresh={() => void fetchTags(currentBaseUrl)}
+          warningSlot={
+            <p className="mt-2 inline-flex items-start gap-1.5 rounded-md bg-warning-subtle px-2.5 py-1.5 text-xs text-warning">
+              <AlertIcon size={14} />
+              Changing the embed model requires re-uploading affected documents (vector dimensions may differ).
+            </p>
+          }
+        />
 
-        <FieldRow
+        <ModelField
           label="Vision model"
+          field="visionModel"
           help="Used for PDF page OCR + figure summarization."
-          envHint={data.envDefaults.visionModel}
+          tags={tags}
+          envDefault={data.envDefaults.visionModel}
+          value={String(effective('visionModel'))}
           override={hasOverride('visionModel')}
+          onChange={(v) => setField('visionModel', v)}
           onReset={() => setField('visionModel', null)}
-        >
-          <input
-            value={String(effective('visionModel'))}
-            onChange={(e) => setField('visionModel', e.target.value)}
-            placeholder={data.envDefaults.visionModel}
-            className={inputCls}
-          />
-        </FieldRow>
+          onRefresh={() => void fetchTags(currentBaseUrl)}
+        />
       </Card>
 
       <Card title="Chat" subtitle="Generation parameters.">
@@ -336,6 +386,9 @@ export function SettingsForm() {
 const inputCls =
   'h-9 w-full rounded-md border border-border-default bg-surface px-3 text-sm placeholder:text-muted shadow-xs focus:border-border-strong focus:outline-none focus:ring-[3px] focus:ring-[var(--ring)]';
 
+const selectCls =
+  'h-9 w-full rounded-md border border-border-default bg-surface px-3 text-sm text-primary shadow-xs focus:border-border-strong focus:outline-none focus:ring-[3px] focus:ring-[var(--ring)]';
+
 function Card({
   title,
   subtitle,
@@ -398,6 +451,111 @@ function FieldRow({
   );
 }
 
+function ModelField({
+  label,
+  help,
+  field,
+  tags,
+  envDefault,
+  value,
+  override,
+  onChange,
+  onReset,
+  onRefresh,
+  warningSlot,
+}: {
+  label: string;
+  help?: string;
+  field: 'chatModel' | 'embedModel' | 'visionModel';
+  tags: TagState;
+  envDefault: string;
+  value: string;
+  override: boolean;
+  onChange: (v: string) => void;
+  onReset: () => void;
+  onRefresh: () => void;
+  warningSlot?: React.ReactNode;
+}) {
+  const models = tags.kind === 'ok' ? tags.models : [];
+  const names = useMemo(() => models.map((m) => m.name).sort((a, b) => a.localeCompare(b)), [models]);
+  const valueSet = useMemo(() => new Set(names), [names]);
+  const present = modelMatches(value, valueSet);
+  // If the stored value is tagless and only `:latest` is in the list,
+  // surface the canonical tagged form in the dropdown so it's selected.
+  const selectValue = valueSet.has(value)
+    ? value
+    : valueSet.has(normalizeTag(value))
+      ? normalizeTag(value)
+      : value;
+
+  return (
+    <FieldRow
+      label={label}
+      help={help}
+      envHint={envDefault}
+      override={override}
+      onReset={onReset}
+    >
+      {tags.kind === 'ok' && names.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <select
+              value={selectValue}
+              onChange={(e) => onChange(e.target.value)}
+              className={selectCls}
+              data-field={field}
+            >
+              {!names.includes(selectValue) && (
+                <option value={selectValue}>{value} · not pulled</option>
+              )}
+              {names.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onRefresh}
+              title="Refresh model list"
+              className="shrink-0 h-9 px-2.5 rounded-md border border-border-default bg-surface text-xs text-secondary hover:bg-subtle"
+            >
+              Refresh
+            </button>
+          </div>
+          {!present && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-warning">
+              <AlertIcon size={13} />
+              Selected model not found on the host. Run:
+              <code className="rounded bg-subtle px-1.5 py-0.5 text-[11px] font-mono">
+                ollama pull {value}
+              </code>
+            </span>
+          )}
+          {warningSlot}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={envDefault}
+            className={inputCls}
+          />
+          <span className="text-xs text-muted">
+            {tags.kind === 'busy'
+              ? 'Loading models…'
+              : tags.kind === 'error'
+                ? `Could not list models (${tags.message}). Type the tag manually or click Test connection.`
+                : 'Click Test connection to populate model dropdown.'}
+          </span>
+          {warningSlot}
+        </div>
+      )}
+    </FieldRow>
+  );
+}
+
 function ModelAvailability({
   models,
   chatModel,
@@ -418,7 +576,7 @@ function ModelAvailability({
   return (
     <div className="rounded-md border border-border-subtle bg-subtle/40 p-3 flex flex-col gap-1.5">
       {rows.map((r) => {
-        const ok = names.has(r.name);
+        const ok = modelMatches(r.name, names);
         return (
           <div key={r.label} className="flex items-center gap-2 text-xs">
             {ok ? (
