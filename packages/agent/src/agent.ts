@@ -1,7 +1,7 @@
-import { streamText, type CoreMessage } from 'ai';
+import { streamText, type CoreMessage, type StepResult, type StreamTextTransform } from 'ai';
 import { createOllama } from 'ollama-ai-provider';
 import { normalizeOllamaBaseURL } from '@app/rag';
-import { buildTools, type ToolDeps } from './tools.js';
+import { buildTools, type AgentTools, type ToolDeps } from './tools.js';
 import { SYSTEM_PROMPT } from './prompts.js';
 
 export interface RunAgentOptions {
@@ -11,6 +11,14 @@ export interface RunAgentOptions {
   toolDeps: ToolDeps;
   /** Cap on tool-use rounds to prevent runaway loops. */
   maxSteps?: number;
+  /** Generation temperature; defaults to 0.2 (matches prior behavior). */
+  temperature?: number;
+  /** Optional per-step callback (used by chat route to capture tool calls). */
+  onStepFinish?: (step: StepResult<AgentTools>) => void | Promise<void>;
+  /** Optional stream transform — used for the §10.6 image-guarantee post-processor. */
+  experimental_transform?:
+    | StreamTextTransform<AgentTools>
+    | Array<StreamTextTransform<AgentTools>>;
 }
 
 export function runAgent(opts: RunAgentOptions) {
@@ -27,7 +35,9 @@ export function runAgent(opts: RunAgentOptions) {
     messages: opts.messages,
     tools,
     maxSteps: opts.maxSteps ?? 5,
-    temperature: 0.2,
+    temperature: opts.temperature ?? 0.2,
+    onStepFinish: opts.onStepFinish,
+    experimental_transform: opts.experimental_transform,
     onError: ({ error }) => {
       console.error('[agent] streamText error:', error);
     },

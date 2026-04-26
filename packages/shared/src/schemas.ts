@@ -26,6 +26,15 @@ export const RetrievalResultSchema = z.object({
   score: z.number(),
   source: z.string(),
   title: z.string().nullable(),
+  imageRefs: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        summary: z.string().nullable(),
+        page: z.number().int(),
+      }),
+    )
+    .optional(),
 });
 export type RetrievalResult = z.infer<typeof RetrievalResultSchema>;
 

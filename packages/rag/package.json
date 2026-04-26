@@ -9,9 +9,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "vitest run"
   },
   "dependencies": {
     "@app/db": "workspace:*",
@@ -19,9 +20,12 @@
     "drizzle-orm": "catalog:",
     "ollama-ai-provider": "catalog:",
     "ai": "catalog:",
+    "unpdf": "^1.6.0",
+    "@napi-rs/canvas": "^0.1.85",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^2.1.8"
   }
 }

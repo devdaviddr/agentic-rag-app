@@ -10,7 +10,7 @@
     "./schema": "./src/schema.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -b",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "generate": "drizzle-kit generate",
