@@ -4,7 +4,7 @@ ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
-# ---- Deps ----
+# ---- Deps (full workspace install, used by builder + migrate) ----
 FROM base AS deps
 WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
@@ -15,14 +15,24 @@ COPY packages/rag/package.json packages/rag/package.json
 COPY packages/agent/package.json packages/agent/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile=false
 
-# ---- Build ----
+# ---- Migrate (one-shot, runs Drizzle migrations against $DATABASE_URL) ----
+# Copy the entire deps tree (root + per-package node_modules with pnpm
+# symlinks) before overlaying source.
+FROM base AS migrate
+WORKDIR /repo
+COPY --from=deps /repo ./
+COPY . .
+WORKDIR /repo/packages/db
+CMD ["pnpm", "exec", "tsx", "src/migrate.ts"]
+
+# ---- Builder ----
 FROM base AS builder
 WORKDIR /repo
-COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo ./
 COPY . .
 RUN pnpm --filter @app/web... build
 
-# ---- Runtime ----
+# ---- Runtime (Next.js standalone) ----
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production

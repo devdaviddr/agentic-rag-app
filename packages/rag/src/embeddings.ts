@@ -7,7 +7,7 @@ export interface EmbeddingClientOptions {
 }
 
 export function createEmbedder(opts: EmbeddingClientOptions) {
-  const ollama = createOllama({ baseURL: opts.baseURL });
+  const ollama = createOllama({ baseURL: normalizeOllamaBaseURL(opts.baseURL) });
   const model = ollama.embedding(opts.model);
 
   return {
@@ -24,3 +24,13 @@ export function createEmbedder(opts: EmbeddingClientOptions) {
 }
 
 export type Embedder = ReturnType<typeof createEmbedder>;
+
+/**
+ * `ollama-ai-provider` expects the base URL to point at Ollama's `/api`
+ * prefix (its default is `http://localhost:11434/api`). Accept either form
+ * from env and normalize so callers can pass the bare host.
+ */
+export function normalizeOllamaBaseURL(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '');
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+}

@@ -18,42 +18,46 @@ services:
       timeout: 5s
       retries: 10
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: rag-ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+  # One-shot: runs Drizzle migrations against the postgres service. Web waits
+  # for this to complete successfully before starting.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: migrate
+    container_name: rag-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-rag}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+    restart: "no"
 
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      target: runner
     container_name: rag-web
-    profiles: ["app"]
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
-      ollama:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-rag}
-      OLLAMA_BASE_URL: http://ollama:11434
+      # Ollama runs on a LAN host, not in this Compose stack. Override
+      # OLLAMA_BASE_URL in .env if your Ollama lives elsewhere.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.4.90:11434}
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.1:8b}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      RAG_TOP_K: ${RAG_TOP_K:-6}
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-800}
+      RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-120}
       NODE_ENV: production
     ports:
       - "3000:3000"
 
 volumes:
   pgdata:
-  ollama:
