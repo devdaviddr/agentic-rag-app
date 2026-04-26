@@ -5,6 +5,7 @@ const EnvSchema = z.object({
   OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
   OLLAMA_CHAT_MODEL: z.string().default('llama3.1:8b'),
   OLLAMA_EMBED_MODEL: z.string().default('nomic-embed-text'),
+  OLLAMA_VISION_MODEL: z.string().default('gemma3:4b'),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
   RAG_CHUNK_SIZE: z.coerce.number().int().positive().default(800),
   RAG_CHUNK_OVERLAP: z.coerce.number().int().nonnegative().default(120),

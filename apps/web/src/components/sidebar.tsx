@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { ChatIcon, DocsIcon, SparklesIcon } from './icons';
+import { ChatIcon, DocsIcon, SettingsIcon, SparklesIcon } from './icons';
 
 type Item = { href: string; label: string; icon: ReactNode; match: (p: string) => boolean };
 
@@ -19,6 +19,12 @@ const items: Item[] = [
     label: 'Documents',
     icon: <DocsIcon size={16} />,
     match: (p) => p === '/documents' || p.startsWith('/documents/'),
+  },
+  {
+    href: '/settings',
+    label: 'Settings',
+    icon: <SettingsIcon size={16} />,
+    match: (p) => p === '/settings',
   },
 ];
 

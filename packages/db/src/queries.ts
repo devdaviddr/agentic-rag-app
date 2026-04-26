@@ -1,6 +1,6 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import { getDb } from './client.js';
-import { documents, chunks } from './schema.js';
+import { documents, chunks, appSettings, type AppSettingsRow } from './schema.js';
 
 /** Returns the deleted id, or null if no row matched. */
 export async function deleteDocument(id: string): Promise<string | null> {
@@ -127,6 +127,38 @@ export interface OriginalContent {
   filename: string;
 }
 
+/**
+ * Returns the raw `original_content` Buffer plus mime/source/title for a
+ * document. Used by the vision-ingest job which needs the PDF bytes.
+ */
+export async function getDocumentBytes(
+  id: string,
+): Promise<{ id: string; source: string; title: string | null; mimeType: string | null; bytes: Buffer } | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({
+      id: documents.id,
+      source: documents.source,
+      title: documents.title,
+      mimeType: documents.mimeType,
+      originalContent: documents.originalContent,
+    })
+    .from(documents)
+    .where(eq(documents.id, id))
+    .limit(1);
+  if (!row || !row.originalContent) return null;
+  const buf = Buffer.isBuffer(row.originalContent)
+    ? row.originalContent
+    : Buffer.from(row.originalContent as Uint8Array);
+  return {
+    id: row.id,
+    source: row.source,
+    title: row.title,
+    mimeType: row.mimeType,
+    bytes: buf,
+  };
+}
+
 export async function getDocumentOriginal(id: string): Promise<OriginalContent | null> {
   const db = getDb();
   const [row] = await db
@@ -206,4 +238,24 @@ function coerceVector(value: unknown): number[] | null {
     return trimmed.split(',').map((s) => Number(s.trim()));
   }
   return null;
+}
+
+export async function getSettingsRow(): Promise<AppSettingsRow | null> {
+  const db = getDb();
+  const rows = await db.select().from(appSettings).where(eq(appSettings.id, 1)).limit(1);
+  return rows[0] ?? null;
+}
+
+type SettingsPatch = Partial<Omit<AppSettingsRow, 'id' | 'updatedAt'>>;
+
+export async function upsertSettings(partial: SettingsPatch): Promise<AppSettingsRow> {
+  const db = getDb();
+  const values: Record<string, unknown> = { id: 1, updatedAt: new Date(), ...partial };
+  const setBlock: Record<string, unknown> = { updatedAt: new Date(), ...partial };
+  const rows = await db
+    .insert(appSettings)
+    .values(values as typeof appSettings.$inferInsert)
+    .onConflictDoUpdate({ target: appSettings.id, set: setBlock })
+    .returning();
+  return rows[0]!;
 }

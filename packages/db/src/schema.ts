@@ -5,10 +5,12 @@ import {
   text,
   jsonb,
   integer,
+  real,
   timestamp,
   index,
   vector,
   customType,
+  check,
 } from 'drizzle-orm/pg-core';
 
 const EMBEDDING_DIM = Number(process.env.EMBEDDING_DIM ?? 768);
@@ -48,6 +50,11 @@ export const documents = pgTable(
     bytes: integer('bytes'),
     originalContent: bytea('original_content'),
     metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    ingestStatus: text('ingest_status').notNull().default('queued'),
+    ingestError: text('ingest_error'),
+    pagesTotal: integer('pages_total'),
+    pagesDone: integer('pages_done').notNull().default(0),
+    extractionMethod: text('extraction_method').notNull().default('text'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -66,6 +73,11 @@ export const chunks = pgTable(
     content: text('content').notNull(),
     tokens: integer('tokens'),
     embedding: vector('embedding', { dimensions: EMBEDDING_DIM }),
+    imageIds: uuid('image_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    page: integer('page'),
     metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -79,6 +91,53 @@ export const chunks = pgTable(
       'gin',
       sql`${t.content} gin_trgm_ops`,
     ),
+    imageIdsIdx: index('chunks_image_ids_idx').using('gin', t.imageIds),
+  }),
+);
+
+export const documentImages = pgTable(
+  'document_images',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    page: integer('page').notNull(),
+    ordinal: integer('ordinal').notNull(),
+    kind: text('kind').notNull(),
+    mimeType: text('mime_type').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    bbox: jsonb('bbox').$type<[number, number, number, number] | null>(),
+    bytes: bytea('bytes').notNull(),
+    summary: text('summary'),
+    summaryEmbedding: vector('summary_embedding', { dimensions: EMBEDDING_DIM }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    docPageIdx: index('document_images_doc_page_idx').on(t.documentId, t.page, t.ordinal),
+    embeddingIdx: index('document_images_embedding_idx')
+      .using('hnsw', t.summaryEmbedding.op('vector_cosine_ops'))
+      .with({ m: 16, ef_construction: 64 }),
+  }),
+);
+
+export const appSettings = pgTable(
+  'app_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    ollamaBaseUrl: text('ollama_base_url'),
+    chatModel: text('chat_model'),
+    embedModel: text('embed_model'),
+    visionModel: text('vision_model'),
+    chatTemperature: real('chat_temperature'),
+    ragTopK: integer('rag_top_k'),
+    ragChunkSize: integer('rag_chunk_size'),
+    ragChunkOverlap: integer('rag_chunk_overlap'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    onlyOneRow: check('app_settings_singleton', sql`${t.id} = 1`),
   }),
 );
 
@@ -86,3 +145,7 @@ export type DocumentRow = typeof documents.$inferSelect;
 export type NewDocumentRow = typeof documents.$inferInsert;
 export type ChunkRow = typeof chunks.$inferSelect;
 export type NewChunkRow = typeof chunks.$inferInsert;
+export type DocumentImageRow = typeof documentImages.$inferSelect;
+export type NewDocumentImageRow = typeof documentImages.$inferInsert;
+export type AppSettingsRow = typeof appSettings.$inferSelect;
+export type NewAppSettingsRow = typeof appSettings.$inferInsert;
