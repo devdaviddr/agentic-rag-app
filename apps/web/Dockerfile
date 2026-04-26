@@ -16,9 +16,11 @@ COPY packages/agent/package.json packages/agent/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile=false
 
 # ---- Migrate (one-shot, runs Drizzle migrations against $DATABASE_URL) ----
+# Copy the entire deps tree (root + per-package node_modules with pnpm
+# symlinks) before overlaying source.
 FROM base AS migrate
 WORKDIR /repo
-COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo ./
 COPY . .
 WORKDIR /repo/packages/db
 CMD ["pnpm", "exec", "tsx", "src/migrate.ts"]
@@ -26,7 +28,7 @@ CMD ["pnpm", "exec", "tsx", "src/migrate.ts"]
 # ---- Builder ----
 FROM base AS builder
 WORKDIR /repo
-COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo ./
 COPY . .
 RUN pnpm --filter @app/web... build
 
