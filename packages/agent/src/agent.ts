@@ -1,5 +1,6 @@
 import { streamText, type CoreMessage } from 'ai';
 import { createOllama } from 'ollama-ai-provider';
+import { normalizeOllamaBaseURL } from '@app/rag';
 import { buildTools, type ToolDeps } from './tools.js';
 import { SYSTEM_PROMPT } from './prompts.js';
 
@@ -13,7 +14,7 @@ export interface RunAgentOptions {
 }
 
 export function runAgent(opts: RunAgentOptions) {
-  const ollama = createOllama({ baseURL: opts.baseURL });
+  const ollama = createOllama({ baseURL: normalizeOllamaBaseURL(opts.baseURL) });
   const tools = buildTools(opts.toolDeps);
 
   return streamText({
