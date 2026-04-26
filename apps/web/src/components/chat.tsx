@@ -3,6 +3,7 @@
 import { useChat } from 'ai/react';
 import { useEffect, useRef } from 'react';
 import { SendIcon, SparklesIcon } from './icons';
+import { ChatMarkdown } from './markdown';
 
 export function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading, error } = useChat({
@@ -106,9 +107,12 @@ function AssistantMessage({ content, streaming }: { content: string; streaming: 
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
         <p className="text-xs font-medium text-muted mb-1">Assistant</p>
-        <div className="text-base text-primary leading-7 whitespace-pre-wrap break-words">
-          {content}
-          {streaming && !content && <span className="inline-block animate-pulse text-accent">▍</span>}
+        <div className="text-base text-primary leading-7 break-words">
+          {content ? (
+            <ChatMarkdown>{content}</ChatMarkdown>
+          ) : (
+            streaming && <span className="inline-block animate-pulse text-accent">▍</span>
+          )}
         </div>
       </div>
     </div>

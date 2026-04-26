@@ -11,7 +11,18 @@ interface ChunkRow {
   embedding?: number[] | null;
 }
 
-type Tab = 'original' | 'chunks';
+interface ImageRow {
+  id: string;
+  kind: 'page' | 'figure' | string;
+  page: number;
+  ordinal: number;
+  mimeType: string;
+  width: number;
+  height: number;
+  summary: string | null;
+}
+
+type Tab = 'original' | 'chunks' | 'pages';
 
 export function DocumentViewer({
   id,
@@ -25,6 +36,18 @@ export function DocumentViewer({
   hasOriginal: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(hasOriginal ? 'original' : 'chunks');
+  const [images, setImages] = useState<ImageRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/documents/${id}/images`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j: { images: ImageRow[] }) => !cancelled && setImages(j.images))
+      .catch(() => !cancelled && setImages([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  const hasPages = (images ?? []).some((i) => i.kind === 'page');
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-1 border-b border-border-subtle">
@@ -36,6 +59,11 @@ export function DocumentViewer({
         <TabButton active={tab === 'chunks'} onClick={() => setTab('chunks')}>
           Chunks &amp; embeddings
         </TabButton>
+        {hasPages && (
+          <TabButton active={tab === 'pages'} onClick={() => setTab('pages')}>
+            Pages
+          </TabButton>
+        )}
         {hasOriginal && (
           <a
             href={`/api/documents/${id}/original?download=1`}
@@ -50,6 +78,7 @@ export function DocumentViewer({
         <OriginalView id={id} source={source} mimeType={mimeType} />
       )}
       {tab === 'chunks' && <ChunksView id={id} />}
+      {tab === 'pages' && <PagesView images={images ?? []} />}
     </div>
   );
 }
@@ -192,5 +221,79 @@ function EmbeddingMeta({ vec }: { vec: number[] | null }) {
     <span className="text-muted">
       dim {vec.length} · ‖v‖ {norm.toFixed(3)}
     </span>
+  );
+}
+
+function PagesView({ images }: { images: ImageRow[] }) {
+  const pages = images.filter((i) => i.kind === 'page');
+  const figuresByPage = new Map<number, ImageRow[]>();
+  for (const img of images) {
+    if (img.kind !== 'figure') continue;
+    if (!figuresByPage.has(img.page)) figuresByPage.set(img.page, []);
+    figuresByPage.get(img.page)!.push(img);
+  }
+  if (pages.length === 0) {
+    return <p className="text-sm text-muted">No page rasters available.</p>;
+  }
+  return (
+    <ol className="flex flex-col gap-6">
+      {pages.map((p) => {
+        const figures = figuresByPage.get(p.page) ?? [];
+        return (
+          <li
+            key={p.id}
+            className="rounded-xl border border-border-subtle bg-surface p-4 shadow-sm"
+          >
+            <header className="mb-3 flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center h-5 px-2 rounded-full bg-accent-subtle text-accent font-medium">
+                page {p.page}
+              </span>
+              <span className="text-muted">
+                {p.width}×{p.height}
+              </span>
+              {figures.length > 0 && (
+                <>
+                  <span className="text-border-default">·</span>
+                  <span className="text-muted">
+                    {figures.length} figure{figures.length === 1 ? '' : 's'}
+                  </span>
+                </>
+              )}
+            </header>
+            <a href={`/api/assets/${p.id}`} target="_blank" rel="noreferrer">
+              <img
+                src={`/api/assets/${p.id}`}
+                alt={`page ${p.page}`}
+                loading="lazy"
+                decoding="async"
+                className="w-full max-h-[640px] object-contain rounded-lg border border-border-subtle bg-subtle"
+              />
+            </a>
+            {figures.length > 0 && (
+              <div className="mt-3 -mx-1 flex gap-2 overflow-x-auto pb-1 px-1">
+                {figures.map((f) => (
+                  <a
+                    key={f.id}
+                    href={`/api/assets/${f.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={f.summary ?? 'figure'}
+                    className="shrink-0 group rounded-md border border-border-subtle bg-subtle hover:border-border-strong transition-colors"
+                  >
+                    <img
+                      src={`/api/assets/${f.id}`}
+                      alt={f.summary ?? `figure ${f.ordinal}`}
+                      loading="lazy"
+                      decoding="async"
+                      className="h-24 w-auto rounded-md object-contain"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }

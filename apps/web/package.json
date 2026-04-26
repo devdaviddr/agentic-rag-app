@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:web": "vitest run"
   },
   "dependencies": {
     "@app/agent": "workspace:*",
@@ -17,18 +18,28 @@
     "@app/shared": "workspace:*",
     "@tailwindcss/postcss": "^4.2.4",
     "ai": "catalog:",
+    "drizzle-orm": "catalog:",
     "next": "^15.1.4",
+    "unpdf": "^1.6.0",
+    "@napi-rs/canvas": "^0.1.85",
     "ollama-ai-provider": "catalog:",
     "postcss": "^8.5.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
     "tailwindcss": "^4.2.4",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
     "eslint-config-next": "^15.1.4",
-    "typescript": "catalog:"
+    "jsdom": "^25.0.1",
+    "typescript": "catalog:",
+    "vitest": "^2.1.8"
   }
 }
