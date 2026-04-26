@@ -45,22 +45,42 @@ cp .env.example .env
 pnpm install
 ```
 
-### 3. Start the stack
+### 3. Generate the initial migration (one-time)
+
+On a fresh clone, generate the SQL Drizzle will apply at startup:
 
 ```bash
-pnpm stack:up          # postgres + ollama (via docker compose)
-pnpm ollama:pull       # pulls llama3.1:8b + nomic-embed-text into the container
-pnpm db:migrate        # apply Drizzle migrations (after first generate)
+pnpm --filter @app/db generate    # writes packages/db/drizzle/*.sql
 ```
 
-> Migrations: on a fresh repo run `pnpm --filter @app/db generate` once to
-> produce the initial SQL under `packages/db/drizzle/`, commit it, then
-> `pnpm db:migrate` to apply.
+Commit the generated files. Re-run after any change to `packages/db/src/schema.ts`.
 
-### 4. Run the app
+### 4. Start the full stack
 
 ```bash
-pnpm dev               # next dev on http://localhost:3000
+docker compose up --build
+```
+
+That brings up, in order:
+
+1. `postgres` (pgvector/pg16) with `vector` + `pg_trgm` extensions
+2. `ollama` daemon
+3. `ollama-init` — pulls `OLLAMA_CHAT_MODEL` + `OLLAMA_EMBED_MODEL` (first
+   run only takes a while; subsequent runs are no-ops)
+4. `migrate` — applies Drizzle migrations against postgres, then exits
+5. `web` — Next.js, listening on http://localhost:3000
+
+The `web` service waits for both `migrate` and `ollama-init` to finish
+successfully, so the app is functional the moment it starts accepting
+connections.
+
+### Local-dev variant (faster inner loop)
+
+If you'd rather run Next on the host with hot reload:
+
+```bash
+docker compose up -d postgres ollama ollama-init migrate
+pnpm dev   # http://localhost:3000
 ```
 
 ### 5. Ingest a document
@@ -89,7 +109,7 @@ Then ask the chat UI: *"What is Agentic RAG?"* — the agent should call
 | `pnpm typecheck`       | TS check across the workspace                       |
 | `pnpm lint`            | Lint all packages                                   |
 | `pnpm format`          | Prettier write across the repo                      |
-| `pnpm stack:up`        | `docker compose up -d` (postgres + ollama)          |
+| `pnpm stack:up`        | `docker compose up -d` (full stack)                 |
 | `pnpm stack:down`      | Tear down the stack                                 |
 | `pnpm db:migrate`      | Apply Drizzle migrations                            |
 | `pnpm db:studio`       | Open drizzle-kit studio                             |

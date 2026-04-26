@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@app/shared": "workspace:*",
+    "dotenv": "^16.4.7",
     "drizzle-orm": "catalog:",
     "postgres": "catalog:"
   },
