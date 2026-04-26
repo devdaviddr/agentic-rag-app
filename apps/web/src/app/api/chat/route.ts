@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { runAgent } from '@app/agent';
-import { env } from '@/lib/env';
-import { embedder } from '@/lib/embedder';
+import { getEnv } from '@/lib/env';
+import { getEmbedder } from '@/lib/embedder';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,8 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const env = getEnv();
+  const embedder = getEmbedder();
   const body = BodySchema.parse(await req.json());
 
   const result = runAgent({
