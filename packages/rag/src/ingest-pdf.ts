@@ -1,3 +1,4 @@
+import './polyfills.js';
 import { sql } from 'drizzle-orm';
 import { getDb, schema, getDocumentBytes } from '@app/db';
 import type { ResolvedSettings } from '@app/shared';

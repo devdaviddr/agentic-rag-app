@@ -1,3 +1,4 @@
+import './polyfills.js';
 import { configureUnPDF, extractText, getDocumentProxy } from 'unpdf';
 
 export interface PdfExtractionResult {

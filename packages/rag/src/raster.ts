@@ -1,3 +1,4 @@
+import './polyfills.js';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { renderPageAsImage } from 'unpdf';
 import { ensurePdfjs } from './pdf.js';
